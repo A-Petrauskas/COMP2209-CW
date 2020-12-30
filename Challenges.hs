@@ -19,6 +19,7 @@ import GHC.Generics (Generic,Generic1)
 import Control.DeepSeq
 import System.IO
 import System.Random
+import Text.Printf (printf)
 
 
 -- types for Part I
@@ -167,7 +168,7 @@ cDownBack x (y:ys) grid acc =
                 then cDownBack x ys grid (acc + 1)
                 else False
         else False
-
+--  MERGE DIAGONALS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 -- Challenge 2 --
@@ -317,13 +318,68 @@ lengthAllWords words = length $ concat words
 -- Challenge 3 --
 
 prettyPrint :: LamMacroExpr -> String
-prettyPrint _ = ""
+prettyPrint (LamDef m l)
+    | (findMacro m l) /= "" = (defMacro m l) ++ (findMacro m l)
+    | otherwise = (defMacro m l) ++ (convert m l)
 
--- examples in the instructions
-ex3'1 = LamDef [] (LamApp (LamAbs 1 (LamVar 1)) (LamAbs 1 (LamVar 1)))
-ex3'2 = LamDef [] (LamAbs 1 (LamApp (LamVar 1) (LamAbs 1 (LamVar 1))))
-ex3'3 = LamDef [ ("F", LamAbs 1 (LamVar 1) ) ] (LamAbs 2 (LamApp (LamVar 2) (LamMacro "F")))
-ex3'4 = LamDef [ ("F", LamAbs 1 (LamVar 1) ) ] (LamAbs 2 (LamApp (LamAbs 1 (LamVar 1)) (LamVar 2))) 
+
+convert :: [ (String , LamExpr) ] -> LamExpr -> String
+convert m (LamMacro str) = printf "%s" str
+
+convert m (LamVar int) = printf "x%d" int
+
+convert m (LamAbs int l)
+    | (findMacro m (LamAbs int l)) /= "" = 
+        printf "%s" (findMacro m (LamAbs int l))
+    | (findMacro m l) /= "" = printf "\\x%d -> %s" int $ findMacro m l
+    | otherwise = printf "\\x%d -> %s" int (convert m l)
+
+convert m (LamApp (LamApp (LamAbs int l'1) l'2) l)
+    | (findMacro m (LamApp (LamApp (LamAbs int l'1) l'2) l)) /= "" =
+        printf "%s" (findMacro m (LamApp (LamApp (LamAbs int l'1) l'2) l))
+    | ((findMacro m (LamApp (LamAbs int l'1) l'2)) /= "") && ((findMacro m l) /= "") =
+        printf "%s %s" (findMacro m (LamApp (LamAbs int l'1) l'2)) (findMacro m l)
+    | (findMacro m (LamApp (LamAbs int l'1) l'2)) /= "" =
+        printf "%s %s" (convert m (LamApp (LamAbs int l'1) l'2)) (convert m l)
+    | (findMacro m l) /= "" = printf "%s %s" (convert m (LamApp (LamAbs int l'1) l'2)) (findMacro m l)
+    | otherwise = printf "(%s) %s" (convert m (LamApp (LamAbs int l'1) l'2)) (convert m l)
+
+convert m (LamApp (LamAbs int l'1) l)
+    | (findMacro m (LamApp (LamAbs int l'1) l)) /= "" =
+        printf "%s" (findMacro m (LamApp (LamAbs int l'1) l))
+    | ((findMacro m (LamAbs int l'1)) /= "") && ((findMacro m l) /= "") =
+        printf "%s %s" (findMacro m (LamAbs int l'1)) (findMacro m l)
+    | (findMacro m (LamAbs int l'1)) /= "" = 
+        printf "%s %s" (findMacro m (LamAbs int l'1)) (convert m l)
+    | (findMacro m l) /= "" = printf "%s %s" (convert m (LamAbs int l'1)) (findMacro m l)
+    | otherwise = printf "(%s) %s" (convert m (LamAbs int l'1)) (convert m l)
+
+convert m (LamApp l (LamApp l'1 l'2))
+    | findMacro m (LamApp l (LamApp l'1 l'2)) /= "" =
+        printf "%s" (findMacro m (LamApp l (LamApp l'1 l'2)))
+    | (findMacro m (LamApp l'1 l'2)) /= "" =
+        printf "%s %s" (convert m l) (findMacro m (LamApp l'1 l'2))
+    | (findMacro m l) /= "" = printf "%s %s" (findMacro m l) (convert m (LamApp l'1 l'2))
+    | otherwise = printf "%s (%s)" (convert m l) (convert m (LamApp l'1 l'2))
+
+convert m (LamApp l'1 l'2)
+    | ((findMacro m l'1) /= "") && ((findMacro m l'2) /= "") = 
+        printf "%s %s" (findMacro m l'1) (findMacro m l'2)
+    | (findMacro m l'1) /= "" = printf "%s %s" (findMacro m l'1) (convert m l'2)
+    | (findMacro m l'2) /= "" = printf "%s %s" (convert m l'1) (findMacro m l'2)
+    | otherwise = printf "%s %s" (convert m l'1) (convert m l'2)
+
+
+
+defMacro :: [ (String , LamExpr) ] -> LamExpr -> String
+defMacro [] _ = ""
+defMacro (x:xs) l = printf "def %s = %s in %s" (fst x) (convert [] $ snd x) (defMacro xs l)
+
+findMacro :: [ (String , LamExpr) ] -> LamExpr -> String
+findMacro [] _ = ""
+findMacro (m:ms) lamdaE
+    | (snd m == lamdaE) = fst m
+    | otherwise = findMacro ms lamdaE
 
 
 -- Challenge 4 --
