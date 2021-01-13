@@ -370,7 +370,7 @@ convert m (LamApp l'1 l'2)
     | otherwise = printf "%s %s" (convert m l'1) (convert m l'2)
 
 
-
+-- Put these up top (Put all small funtcions up top maybe)
 defMacro :: [ (String , LamExpr) ] -> LamExpr -> String
 defMacro [] _ = ""
 defMacro (x:xs) l = printf "def %s = %s in %s" (fst x) (convert [] $ snd x) (defMacro xs l)
@@ -385,7 +385,104 @@ findMacro (m:ms) lamdaE
 -- Challenge 4 --
 
 parseLamMacro :: String -> Maybe LamMacroExpr
-parseLamMacro _ = Nothing 
+parseLamMacro string = 
+    if (isInfixOf "def" string)
+        then if ((null $ parse multipleMacro string) || (null $ parse allParsers afterMacro)
+            || (notUniqueMacro (fst $ head $ parse multipleMacro string))
+            || (notClosedMacro (map snd (fst $ head $ parse multipleMacro string)))) 
+
+            then Nothing
+            else Just $ addMacro (fst $ head $ parse multipleMacro string) (fst $ head $ parse allParsers afterMacro)
+        else if (null $ parse allParsers string)
+            then Nothing
+            else Just $ addMacro [] (fst $ head $ parse allParsers string)
+                where afterMacro = snd $ head $ parse (multipleMacro) string
+                      allParsers = (appParser <|> absParser <|> getMacroChar)
+
+
+addMacro :: [ (String,LamExpr) ] -> LamExpr -> LamMacroExpr
+addMacro macro expr = (LamDef macro expr)
+
+getMacroChar :: Parser LamExpr
+getMacroChar = do
+    uChar <- upper
+    space
+    return (LamMacro [uChar])
+
+getVar :: Parser Int
+getVar = do
+    char 'x'
+    num <- nat
+    space
+    return num
+
+varParser :: Parser LamExpr
+varParser = do
+    num <- getVar
+    space
+    return (LamVar num)
+
+brackets :: Parser LamExpr
+brackets = do
+    space
+    char '('
+    result <- appParser <|> absParser <|> varParser <|> getMacroChar
+    char ')'
+    space
+    return result
+
+appParser :: Parser LamExpr
+appParser = do
+    firstA <- brackets <|> absParser <|> varParser <|> getMacroChar
+    secondA <- brackets <|> absParser <|> varParser <|> getMacroChar
+    more <- many (appParser <|> absParser <|> varParser <|> getMacroChar)
+    if (more == [])
+        then return (LamApp firstA secondA)
+        else return (LamApp (LamApp firstA secondA) (head more))
+
+absParser :: Parser LamExpr
+absParser = do
+    space
+    char '\\'
+    lamNum <- getVar
+    space
+    symbol "->"
+    space
+    secondA <- appParser <|> absParser <|> brackets <|> varParser <|> getMacroChar
+    return (LamAbs lamNum secondA)
+
+macroParser :: Parser (String,LamExpr)
+macroParser = do
+    symbol "def"
+    space
+    name <- upper
+    space
+    char '='
+    space
+    macroE <- appParser <|> absParser <|> varParser
+    space
+    symbol "in"
+    space
+    return ([name], macroE)
+
+multipleMacro :: Parser [ (String,LamExpr) ]
+multipleMacro = do
+    result <- some macroParser
+    return result
+
+
+notUniqueMacro :: [ (String,LamExpr) ] -> Bool
+notUniqueMacro input =
+    if ((length onlyMacroName) /= (length $ nub onlyMacroName))
+        then True
+        else False
+            where onlyMacroName = map fst input
+
+
+notClosedMacro :: [ LamExpr ] -> Bool
+notClosedMacro [] = False
+notClosedMacro (LamVar _:xs) = True
+notClosedMacro (x:xs) = notClosedMacro xs
 
 
 -- Challenge 5
