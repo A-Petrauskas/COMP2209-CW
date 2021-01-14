@@ -459,7 +459,7 @@ macroParser = do
     space
     char '='
     space
-    macroE <- appParser <|> absParser <|> varParser
+    macroE <- appParser <|> brackets <|> absParser <|> varParser
     space
     symbol "in"
     space
@@ -488,14 +488,45 @@ notClosedMacro (x:xs) = notClosedMacro xs
 -- Challenge 5
 
 cpsTransform :: LamMacroExpr -> LamMacroExpr
-cpsTransform _ = LamDef [] (LamVar 0)
+cpsTransform (LamDef macros lamExpr) =
+    addMacro (transformMacros macros allUsed) (transform lamExpr (allUsedNmbrs (show (transformMacros macros allUsed))))
+        where allUsed = allUsedNmbrs (show macros) ++ allUsedNmbrs (show lamExpr)
 
--- Examples in the instructions
-exId =  LamAbs 1 (LamVar 1)
-ex5'1 = (LamApp (LamVar 1) (LamVar 2))
-ex5'2 = (LamDef [ ("F", exId) ] (LamVar 2) )
-ex5'3 = (LamDef [ ("F", exId) ] (LamMacro "F") )
-ex5'4 = (LamDef [ ("F", exId) ] (LamApp (LamMacro "F") (LamMacro "F")))
+transform :: LamExpr -> [Int] -> LamExpr
+transform (LamMacro x) used = LamMacro x
+
+transform (LamVar x) used = LamAbs k (LamApp (LamVar k) (LamVar x))
+    where k = (freeVarNmbr (used ++ [x]) 1)
+
+transform (LamAbs x y) used = LamAbs k (LamApp (LamVar k) (LamAbs x (transform y (used ++ [x,k]))))
+    where k = (freeVarNmbr (used ++ [x]) 1)
+
+transform (LamApp x y) used = LamAbs k ( LamApp (transform x (used ++ [k,f,e])) 
+    (LamAbs f (LamApp (transform y (used ++ [k,f,e, (maximum (used ++ [k,f,e]) + 1)])) 
+    (LamAbs e (LamApp (LamApp (LamVar f) (LamVar e)) (LamVar k))))))
+    where k = (freeVarNmbr used 1)
+          f = (freeVarNmbr (used ++ [k]) 1)
+          e = (freeVarNmbr (used ++ [k, f]) 1)
+
+
+freeVarNmbr :: [Int] -> Int -> Int
+freeVarNmbr used acc = 
+    if (acc `elem` used)
+        then freeVarNmbr used (acc + 1)
+        else acc
+
+
+allUsedNmbrs :: String -> [Int]
+allUsedNmbrs [] = []
+allUsedNmbrs (x:xs) 
+    | (isDigit x) = [(digitToInt x)] ++ allUsedNmbrs xs
+    | otherwise = allUsedNmbrs xs
+
+
+transformMacros :: [ (String,LamExpr) ] -> [Int] -> [ (String,LamExpr) ]
+transformMacros [] used = []
+transformMacros (x:xs) used = 
+    [((fst x),(transform (snd x) used))] ++ transformMacros xs (allUsedNmbrs (show(transform (snd x) used)))
 
 
 -- Challenge 6
