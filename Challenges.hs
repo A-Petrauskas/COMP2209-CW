@@ -21,17 +21,20 @@ import System.IO
 import System.Random
 import Text.Printf (printf)
 
+instance NFData Orientation
+instance NFData LamMacroExpr
+instance NFData LamExpr
 
 -- types for Part I
 type WordSearchGrid = [[ Char ]]
 type Placement = (Posn,Orientation)
 type Posn = (Int,Int)
-data Orientation = Forward | Back | Up | Down | UpForward | UpBack | DownForward | DownBack deriving (Eq,Ord,Show,Read)
+data Orientation = Forward | Back | Up | Down | UpForward | UpBack | DownForward | DownBack deriving (Eq,Ord,Show,Read,Generic)
 
 -- types for Parts II and III
-data LamMacroExpr = LamDef [ (String,LamExpr) ] LamExpr deriving (Eq,Show,Read)
+data LamMacroExpr = LamDef [ (String,LamExpr) ] LamExpr deriving (Eq,Show,Read,Generic)
 data LamExpr = LamMacro String | LamApp LamExpr LamExpr  |
-               LamAbs Int LamExpr  | LamVar Int deriving (Eq,Show,Read)
+               LamAbs Int LamExpr  | LamVar Int deriving (Eq,Show,Read,Generic)
 
 -- END OF CODE YOU MUST NOT MODIFY
 
@@ -53,11 +56,12 @@ startingLetterPos c (a,b) (y:ys) =
         else startingLetterPos c (-1,(b+1)) ys
 startingLetterPos _ _ [] = []
 
--- Takes all letter's positions in a single row as a list and
--- returns them as Posn according to which row is given (snd Posn)
+
+-- Takes all letter's positions in a single given row as a list and returns them as Posn
 addEveryOcc :: [Int] -> Posn -> [Posn]
 addEveryOcc [] _ = []
 addEveryOcc (x:xs) y = [(x, snd (y))] ++ (addEveryOcc xs y)
+
 
 -- Takes all possible word starting positions and
 -- checks every orientation until all positions have been tested.
@@ -76,7 +80,7 @@ checkOrient (x:xs) word grid
     | otherwise = checkOrient xs word grid
 
 
-------All the orientation checks (c) defined below------
+------All the orientation checks defined below------
 
 cForward :: Posn -> String -> WordSearchGrid -> Int -> Bool
 cForward _ [] _ _ = True
@@ -168,16 +172,21 @@ cDownBack x (y:ys) grid acc =
                 then cDownBack x ys grid (acc + 1)
                 else False
         else False
---  MERGE DIAGONALS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 
 
 -- Challenge 2 --
 
+-- First creates a grid full of random chars according to density
+-- Then inserts the given words
 createWordSearch :: [ String ] -> Double -> IO WordSearchGrid
 createWordSearch words density =  do
-    grid <- fillGrid words density
+    grid <- fillGridRnd words density
     fillwHiddenWords words grid []
 
+
+-- Places words into the grid according to randomized placement
+-- And keeps track of the successfully placed words placements for overwritting checks
 fillwHiddenWords :: [ String ] -> WordSearchGrid -> [Posn] -> IO WordSearchGrid
 fillwHiddenWords (word:words) grid posns = do
     rndP <- randomPlacement (length (grid !! 0))
@@ -186,11 +195,94 @@ fillwHiddenWords (word:words) grid posns = do
         else fillwHiddenWords (word:words) grid posns
 fillwHiddenWords [] grid _ = return grid
 
-fillGrid :: [ String ] -> Double -> IO WordSearchGrid
-fillGrid words density = do
+
+-- Creates a grid size (according to density) and fills with random letters (from the input list)
+fillGridRnd :: [ String ] -> Double -> IO WordSearchGrid
+fillGridRnd words density = do
     let size = (calcGridSize (lengthAllWords words) density 1)
     replicateM size (replicateM size (randomLetter (givenLetters words)))
 
+
+-- Only returns true when the given word and the hidden words inside the grid
+-- have a common letter (crossing) or when the word is a subset of another inside the grid
+checkOverwritting :: [Posn] -> String -> [Posn] -> WordSearchGrid -> Bool
+checkOverwritting [] [] _ _ = True
+checkOverwritting (x:xs) (y:ys) usedPos grid =
+    if (x `elem` usedPos)
+        then 
+            if ( ((grid !! (snd x)) !! (fst x)) == y )
+                then checkOverwritting xs ys usedPos grid
+                else False
+        else checkOverwritting xs ys usedPos grid
+
+
+-- Adds the word to the grid by changing a single letter at a time inside a row
+-- Then puts the new row into the grid
+addHiddenWord :: String -> WordSearchGrid -> [Posn] -> WordSearchGrid
+addHiddenWord _ grid [] = grid
+addHiddenWord (x:xs) grid (y:ys) = addHiddenWord xs ( replaceRow (snd y) (replaceLetter (fst y) x (grid !! (snd y))) grid ) ys
+
+
+-- Replaces a letter inside a row
+replaceLetter :: Int -> Char -> [Char] -> [Char]
+replaceLetter col letter row = a ++ (letter:b) 
+    where (a, (_:b)) = splitAt col row
+
+
+-- Replaces a row inside the grid
+replaceRow :: Int -> [Char] -> WordSearchGrid -> WordSearchGrid
+replaceRow rowN row grid = a ++ (row:b) 
+    where (a, (_:b)) = splitAt rowN grid
+
+
+-- Generates a pseudo-random placement (in bounds of grid size)
+randomPlacement :: Int -> IO Placement
+randomPlacement size = do
+    let orients = [Forward,Back,Up,Down,UpForward,UpBack,DownForward,DownBack]
+    rnd'1 <- randomRIO (0, size - 1)
+    rnd'2 <- randomRIO (0, size - 1)
+    rnd'3 <- randomRIO (0,7)
+    return ((rnd'1,rnd'2),(orients !! rnd'3))
+
+
+-- Generates a pseudo-random letter (from the given input letters)
+randomLetter :: String -> IO Char
+randomLetter letters = do
+    rnd <- randomRIO (0, length letters -1)
+    return (letters !! fromIntegral (rnd))
+
+
+-- Calculates the appropriate grid size according to density
+calcGridSize :: Int -> Double -> Int -> Int
+calcGridSize wordsL density size = 
+    if (((fromIntegral wordsL) / fromIntegral (size * size)) < density)
+        then size
+        else calcGridSize wordsL density (size + 1)
+
+
+givenLetters :: [ String ] -> String
+givenLetters words = nub $ concat words
+
+lengthAllWords :: [ String ] -> Int
+lengthAllWords words = length $ concat words 
+
+
+-- Returns a word's each letters' position inside the grid
+hiddenWordPos :: Placement -> String -> [Posn]
+hiddenWordPos _ [] = []
+hiddenWordPos ((a,b),Forward) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a + 1,b),Forward)) xs)
+hiddenWordPos ((a,b),Back) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a - 1,b),Back)) xs)
+hiddenWordPos ((a,b),Up) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a,b - 1),Up)) xs)
+hiddenWordPos ((a,b),Down) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a,b + 1),Down)) xs)
+hiddenWordPos ((a,b),UpForward) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a + 1,b - 1),UpForward)) xs)
+hiddenWordPos ((a,b),UpBack) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a - 1,b - 1),UpBack)) xs)
+hiddenWordPos ((a,b),DownForward) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a + 1,b + 1),DownForward)) xs)
+hiddenWordPos ((a,b),DownBack) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a - 1,b + 1),DownBack)) xs)
+
+
+-- Checks if a word fits inside the grid according to the given (random) placement
+-- Also ensures that placing the word does not destroy any other already hidden words
+-- But allows for words to cross over each other
 checkFit :: Placement -> WordSearchGrid -> [Posn] -> String -> Bool
 checkFit plac grid [] word = checkFit plac grid [(-1,-1)] word
 checkFit (x,Forward) grid usedPoss word = 
@@ -254,66 +346,6 @@ checkFit (x,DownBack) grid usedPoss word =
         else False
 
 
-checkOverwritting :: [Posn] -> String -> [Posn] -> WordSearchGrid -> Bool
-checkOverwritting [] [] _ _ = True
-checkOverwritting (x:xs) (y:ys) usedPos grid =
-    if (x `elem` usedPos)
-        then 
-            if ( ((grid !! (snd x)) !! (fst x)) == y )
-                then checkOverwritting xs ys usedPos grid
-                else False
-        else checkOverwritting xs ys usedPos grid
-
-hiddenWordPos :: Placement -> String -> [Posn]
-hiddenWordPos _ [] = []
-hiddenWordPos ((a,b),Forward) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a + 1,b),Forward)) xs)
-hiddenWordPos ((a,b),Back) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a - 1,b),Back)) xs)
-hiddenWordPos ((a,b),Up) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a,b - 1),Up)) xs)
-hiddenWordPos ((a,b),Down) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a,b + 1),Down)) xs)
-hiddenWordPos ((a,b),UpForward) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a + 1,b - 1),UpForward)) xs)
-hiddenWordPos ((a,b),UpBack) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a - 1,b - 1),UpBack)) xs)
-hiddenWordPos ((a,b),DownForward) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a + 1,b + 1),DownForward)) xs)
-hiddenWordPos ((a,b),DownBack) (x:xs) = [(a,b)] ++ (hiddenWordPos (((a - 1,b + 1),DownBack)) xs)
-
-addHiddenWord :: String -> WordSearchGrid -> [Posn] -> WordSearchGrid
-addHiddenWord _ grid [] = grid
-addHiddenWord (x:xs) grid (y:ys) = addHiddenWord xs ( replaceRow (snd y) (replaceLetter (fst y) x (grid !! (snd y))) grid ) ys
-
-replaceLetter :: Int -> Char -> [Char] -> [Char]
-replaceLetter col letter row = a ++ (letter:b) 
-    where (a, (_:b)) = splitAt col row
-
-replaceRow :: Int -> [Char] -> WordSearchGrid -> WordSearchGrid
-replaceRow rowN row grid = a ++ (row:b) 
-    where (a, (_:b)) = splitAt rowN grid
-
-
-randomPlacement :: Int -> IO Placement
-randomPlacement size = do
-    let orients = [Forward,Back,Up,Down,UpForward,UpBack,DownForward,DownBack]
-    rnd'1 <- randomRIO (0, size - 1)
-    rnd'2 <- randomRIO (0, size - 1)
-    rnd'3 <- randomRIO (0,7)
-    return ((rnd'1,rnd'2),(orients !! rnd'3))
-
-randomLetter :: String -> IO Char
-randomLetter letters = do
-    rnd <- randomRIO (0, length letters -1)
-    return (letters !! fromIntegral (rnd))
-
-calcGridSize :: Int -> Double -> Int -> Int
-calcGridSize wordsL density size = 
-    if (((fromIntegral wordsL) / fromIntegral (size * size)) < density)
-        then size
-        else calcGridSize wordsL density (size + 1)
-
-givenLetters :: [ String ] -> String
-givenLetters words = nub $ concat words
-
-lengthAllWords :: [ String ] -> Int
-lengthAllWords words = length $ concat words 
-
-
 
 -- Challenge 3 --
 
@@ -323,58 +355,14 @@ prettyPrint (LamDef m l)
     | otherwise = (defMacro m l) ++ (convert m l)
 
 
-convert :: [ (String , LamExpr) ] -> LamExpr -> String
-convert m (LamMacro str) = printf "%s" str
-
-convert m (LamVar int) = printf "x%d" int
-
-convert m (LamAbs int l)
-    | (findMacro m (LamAbs int l)) /= "" = 
-        printf "%s" (findMacro m (LamAbs int l))
-    | (findMacro m l) /= "" = printf "\\x%d -> %s" int $ findMacro m l
-    | otherwise = printf "\\x%d -> %s" int (convert m l)
-
-convert m (LamApp (LamApp (LamAbs int l'1) l'2) l)
-    | (findMacro m (LamApp (LamApp (LamAbs int l'1) l'2) l)) /= "" =
-        printf "%s" (findMacro m (LamApp (LamApp (LamAbs int l'1) l'2) l))
-    | ((findMacro m (LamApp (LamAbs int l'1) l'2)) /= "") && ((findMacro m l) /= "") =
-        printf "%s %s" (findMacro m (LamApp (LamAbs int l'1) l'2)) (findMacro m l)
-    | (findMacro m (LamApp (LamAbs int l'1) l'2)) /= "" =
-        printf "%s %s" (convert m (LamApp (LamAbs int l'1) l'2)) (convert m l)
-    | (findMacro m l) /= "" = printf "%s %s" (convert m (LamApp (LamAbs int l'1) l'2)) (findMacro m l)
-    | otherwise = printf "(%s) %s" (convert m (LamApp (LamAbs int l'1) l'2)) (convert m l)
-
-convert m (LamApp (LamAbs int l'1) l)
-    | (findMacro m (LamApp (LamAbs int l'1) l)) /= "" =
-        printf "%s" (findMacro m (LamApp (LamAbs int l'1) l))
-    | ((findMacro m (LamAbs int l'1)) /= "") && ((findMacro m l) /= "") =
-        printf "%s %s" (findMacro m (LamAbs int l'1)) (findMacro m l)
-    | (findMacro m (LamAbs int l'1)) /= "" = 
-        printf "%s %s" (findMacro m (LamAbs int l'1)) (convert m l)
-    | (findMacro m l) /= "" = printf "%s %s" (convert m (LamAbs int l'1)) (findMacro m l)
-    | otherwise = printf "(%s) %s" (convert m (LamAbs int l'1)) (convert m l)
-
-convert m (LamApp l (LamApp l'1 l'2))
-    | findMacro m (LamApp l (LamApp l'1 l'2)) /= "" =
-        printf "%s" (findMacro m (LamApp l (LamApp l'1 l'2)))
-    | (findMacro m (LamApp l'1 l'2)) /= "" =
-        printf "%s %s" (convert m l) (findMacro m (LamApp l'1 l'2))
-    | (findMacro m l) /= "" = printf "%s %s" (findMacro m l) (convert m (LamApp l'1 l'2))
-    | otherwise = printf "%s (%s)" (convert m l) (convert m (LamApp l'1 l'2))
-
-convert m (LamApp l'1 l'2)
-    | ((findMacro m l'1) /= "") && ((findMacro m l'2) /= "") = 
-        printf "%s %s" (findMacro m l'1) (findMacro m l'2)
-    | (findMacro m l'1) /= "" = printf "%s %s" (findMacro m l'1) (convert m l'2)
-    | (findMacro m l'2) /= "" = printf "%s %s" (convert m l'1) (findMacro m l'2)
-    | otherwise = printf "%s %s" (convert m l'1) (convert m l'2)
-
-
--- Put these up top (Put all small funtcions up top maybe)
+-- Defines macro printing format and converts Macro definitions
 defMacro :: [ (String , LamExpr) ] -> LamExpr -> String
 defMacro [] _ = ""
 defMacro (x:xs) l = printf "def %s = %s in %s" (fst x) (convert [] $ snd x) (defMacro xs l)
 
+
+-- Tries to Find a Macro definition inside the given lambda expression
+-- If found returns the Macro name, else returns the empty string
 findMacro :: [ (String , LamExpr) ] -> LamExpr -> String
 findMacro [] _ = ""
 findMacro (m:ms) lamdaE
@@ -382,8 +370,77 @@ findMacro (m:ms) lamdaE
     | otherwise = findMacro ms lamdaE
 
 
+-- Ensures every sub-expression of a macro lambda expression has the corrent bracketing
+-- Checking for syntactically equal expressions to the ones defined in Macros 
+convert :: [ (String , LamExpr) ] -> LamExpr -> String
+convert m (LamMacro name) = printf "%s" name
+
+convert m (LamVar int) = printf "x%d" int
+
+-- Abstraction conversion
+convert m (LamAbs int l)
+    | (findMacro m (LamAbs int l)) /= "" = 
+        printf "%s" (findMacro m (LamAbs int l))
+
+    | (findMacro m l) /= "" = printf "\\x%d -> %s" int $ findMacro m l
+    | otherwise = printf "\\x%d -> %s" int (convert m l)
+
+-- Bracketing and conversion for App ( App ( Abs ) )
+convert m (LamApp (LamApp (LamAbs int l'1) l'2) l)
+    | (findMacro m (LamApp (LamApp (LamAbs int l'1) l'2) l)) /= "" =
+        printf "%s" (findMacro m (LamApp (LamApp (LamAbs int l'1) l'2) l))
+
+    | ((findMacro m (LamApp (LamAbs int l'1) l'2)) /= "") && ((findMacro m l) /= "") =
+        printf "%s %s" (findMacro m (LamApp (LamAbs int l'1) l'2)) (findMacro m l)
+        
+    | (findMacro m (LamApp (LamAbs int l'1) l'2)) /= "" =
+        printf "%s %s" (convert m (LamApp (LamAbs int l'1) l'2)) (convert m l)
+
+    | (findMacro m l) /= "" = printf "%s %s" (convert m (LamApp (LamAbs int l'1) l'2)) (findMacro m l)
+    | otherwise = printf "(%s) %s" (convert m (LamApp (LamAbs int l'1) l'2)) (convert m l)
+
+-- Bracketing and conversion for App ( Abs )
+convert m (LamApp (LamAbs int l'1) l)
+    | (findMacro m (LamApp (LamAbs int l'1) l)) /= "" =
+        printf "%s" (findMacro m (LamApp (LamAbs int l'1) l))
+
+    | ((findMacro m (LamAbs int l'1)) /= "") && ((findMacro m l) /= "") =
+        printf "%s %s" (findMacro m (LamAbs int l'1)) (findMacro m l)
+
+    | (findMacro m (LamAbs int l'1)) /= "" = 
+        printf "%s %s" (findMacro m (LamAbs int l'1)) (convert m l)
+
+    | (findMacro m l) /= "" = printf "%s %s" (convert m (LamAbs int l'1)) (findMacro m l)
+    | otherwise = printf "(%s) %s" (convert m (LamAbs int l'1)) (convert m l)
+
+
+-- Bracketing and conversion for App ( App )
+convert m (LamApp l (LamApp l'1 l'2))
+    | findMacro m (LamApp l (LamApp l'1 l'2)) /= "" =
+        printf "%s" (findMacro m (LamApp l (LamApp l'1 l'2)))
+
+    | (findMacro m (LamApp l'1 l'2)) /= "" =
+        printf "%s %s" (convert m l) (findMacro m (LamApp l'1 l'2))
+
+    | (findMacro m l) /= "" = printf "%s %s" (findMacro m l) (convert m (LamApp l'1 l'2))
+    | otherwise = printf "%s (%s)" (convert m l) (convert m (LamApp l'1 l'2))
+
+-- Bracketing and conversion for App 
+convert m (LamApp l'1 l'2)
+    | ((findMacro m l'1) /= "") && ((findMacro m l'2) /= "") = 
+        printf "%s %s" (findMacro m l'1) (findMacro m l'2)
+
+    | (findMacro m l'1) /= "" = printf "%s %s" (findMacro m l'1) (convert m l'2)
+    | (findMacro m l'2) /= "" = printf "%s %s" (convert m l'1) (findMacro m l'2)
+    | otherwise = printf "%s %s" (convert m l'1) (convert m l'2)
+
+
+
 -- Challenge 4 --
 
+-- If the string contains Macro definitions then checks for their uniqueness and
+-- and for closed terms. Then procedes with parsing
+-- If not - parses
 parseLamMacro :: String -> Maybe LamMacroExpr
 parseLamMacro string = 
     if (isInfixOf "def" string)
@@ -400,14 +457,18 @@ parseLamMacro string =
                       allParsers = (appParser <|> absParser <|> getMacroChar)
 
 
+-- Combines Macro definitions with the Lambda Expression
 addMacro :: [ (String,LamExpr) ] -> LamExpr -> LamMacroExpr
 addMacro macro expr = (LamDef macro expr)
 
+
+-- Returns single capital letter (Macro name)
 getMacroChar :: Parser LamExpr
 getMacroChar = do
     uChar <- upper
     space
     return (LamMacro [uChar])
+
 
 getVar :: Parser Int
 getVar = do
@@ -431,6 +492,9 @@ brackets = do
     space
     return result
 
+
+-- Parsers application by parsing the first and second arguments
+-- Then checking if its possible to parse further (the sub-expressions)
 appParser :: Parser LamExpr
 appParser = do
     firstA <- brackets <|> absParser <|> varParser <|> getMacroChar
@@ -440,6 +504,9 @@ appParser = do
         then return (LamApp firstA secondA)
         else return (LamApp (LamApp firstA secondA) (head more))
 
+
+-- Parses abstraction by taking the first argument as a LamVar
+-- the second argument as a further parse
 absParser :: Parser LamExpr
 absParser = do
     space
@@ -451,6 +518,8 @@ absParser = do
     secondA <- appParser <|> absParser <|> brackets <|> varParser <|> getMacroChar
     return (LamAbs lamNum secondA)
 
+
+-- Parses a single Macro definition
 macroParser :: Parser (String,LamExpr)
 macroParser = do
     symbol "def"
@@ -465,12 +534,15 @@ macroParser = do
     space
     return ([name], macroE)
 
+
+-- Parses multiple Macro definitions
 multipleMacro :: Parser [ (String,LamExpr) ]
 multipleMacro = do
     result <- some macroParser
     return result
 
 
+-- Checks whether Macro names repeat
 notUniqueMacro :: [ (String,LamExpr) ] -> Bool
 notUniqueMacro input =
     if ((length onlyMacroName) /= (length $ nub onlyMacroName))
@@ -479,28 +551,38 @@ notUniqueMacro input =
             where onlyMacroName = map fst input
 
 
+-- Checks whether a Macro body is not closed
 notClosedMacro :: [ LamExpr ] -> Bool
 notClosedMacro [] = False
 notClosedMacro (LamVar _:xs) = True
 notClosedMacro (x:xs) = notClosedMacro xs
 
 
+
 -- Challenge 5
 
+-- Transforms Macro definitions and the lambda expression seperately and combines them
 cpsTransform :: LamMacroExpr -> LamMacroExpr
 cpsTransform (LamDef macros lamExpr) =
     addMacro (transformMacros macros allUsed) (transform lamExpr (allUsedNmbrs (show (transformMacros macros allUsed))))
         where allUsed = allUsedNmbrs (show macros) ++ allUsedNmbrs (show lamExpr)
 
+
+-- Transforms lambda expressions with Macros to cps form
+-- Keeps track of used integers
 transform :: LamExpr -> [Int] -> LamExpr
+-- Macro name transformation
 transform (LamMacro x) used = LamMacro x
 
+-- Variable transformation, adds the used integer to the "used" list
 transform (LamVar x) used = LamAbs k (LamApp (LamVar k) (LamVar x))
     where k = (freeVarNmbr (used ++ [x]) 1)
 
+-- Abstraction transformation, adds the used integers to the "used" list
 transform (LamAbs x y) used = LamAbs k (LamApp (LamVar k) (LamAbs x (transform y (used ++ [x,k]))))
     where k = (freeVarNmbr (used ++ [x]) 1)
 
+-- Abstraction transformation, adds the used integers to the "used" list
 transform (LamApp x y) used = LamAbs k ( LamApp (transform x (used ++ [k,f,e])) 
     (LamAbs f (LamApp (transform y (used ++ [k,f,e, (maximum (used ++ [k,f,e]) + 1)])) 
     (LamAbs e (LamApp (LamApp (LamVar f) (LamVar e)) (LamVar k))))))
@@ -509,6 +591,7 @@ transform (LamApp x y) used = LamAbs k ( LamApp (transform x (used ++ [k,f,e]))
           e = (freeVarNmbr (used ++ [k, f]) 1)
 
 
+-- Returns the next available natural number
 freeVarNmbr :: [Int] -> Int -> Int
 freeVarNmbr used acc = 
     if (acc `elem` used)
@@ -516,6 +599,7 @@ freeVarNmbr used acc =
         else acc
 
 
+-- Returns a list of all used integers inside the given string (lambda expression with Macros)
 allUsedNmbrs :: String -> [Int]
 allUsedNmbrs [] = []
 allUsedNmbrs (x:xs) 
@@ -523,13 +607,18 @@ allUsedNmbrs (x:xs)
     | otherwise = allUsedNmbrs xs
 
 
+-- Transforms multiple Macro definitions
 transformMacros :: [ (String,LamExpr) ] -> [Int] -> [ (String,LamExpr) ]
 transformMacros [] used = []
 transformMacros (x:xs) used = 
     [((fst x),(transform (snd x) used))] ++ transformMacros xs (allUsedNmbrs (show(transform (snd x) used)))
 
 
+
 -- Challenge 6
+
+compareInnerOuter :: LamMacroExpr -> Int -> (Maybe Int,Maybe Int,Maybe Int,Maybe Int)
+compareInnerOuter _ _ = (Nothing,Nothing,Nothing,Nothing) 
 
 innerRedn1 :: LamMacroExpr -> Maybe LamMacroExpr
 innerRedn1 _ = Nothing
@@ -537,29 +626,25 @@ innerRedn1 _ = Nothing
 outerRedn1 :: LamMacroExpr -> Maybe LamMacroExpr
 outerRedn1 _ = Nothing
 
-compareInnerOuter :: LamMacroExpr -> Int -> (Maybe Int,Maybe Int,Maybe Int,Maybe Int)
-compareInnerOuter _ _ = (Nothing,Nothing,Nothing,Nothing) 
 
--- Examples in the instructions
+-- Checks whether a lambda expression is beta-reducable
+canBetaReduce :: LamExpr -> Bool
+canBetaReduce (LamApp (LamAbs _ _) _) = True
+canBetaReduce (LamApp expr1 expr2) = canBetaReduce expr1 || canBetaReduce expr2
+canBetaReduce (LamAbs _ expr) = canBetaReduce expr
+canBetaReduce (LamMacro _) = False
+canBetaReduce (LamVar _) = False
 
--- (\x1 -> x1 x2)
-ex6'1 = LamDef [] (LamAbs 1 (LamApp (LamVar 1) (LamVar 2)))
+-- Does a single substitution (beta-reduction)
+substitute :: Int -> LamExpr -> LamExpr -> LamExpr
+substitute value (LamMacro macro) expr = LamMacro macro
 
---  def F = \x1 -> x1 in F  
-ex6'2 = LamDef [ ("F",exId) ] (LamMacro "F")
+substitute value (LamVar x) expr
+    | (x == value) = expr
+    | otherwise = LamVar x
 
---  (\x1 -> x1) (\x2 -> x2)   
-ex6'3 = LamDef [] ( LamApp exId (LamAbs 2 (LamVar 2)))
+substitute value (LamAbs x y) expr
+    | (x == value) = (LamAbs x y)
+    | otherwise = LamAbs x (substitute value y expr)
 
---  (\x1 -> x1 x1)(\x1 -> x1 x1)  
-wExp = (LamAbs 1 (LamApp (LamVar 1) (LamVar 1)))
-ex6'4 = LamDef [] (LamApp wExp wExp)
-
---  def ID = \x1 -> x1 in def FST = (\x1 -> λx2 -> x1) in FST x3 (ID x4) 
-ex6'5 = LamDef [ ("ID",exId) , ("FST",LamAbs 1 (LamAbs 2 (LamVar 1))) ] ( LamApp (LamApp (LamMacro "FST") (LamVar 3)) (LamApp (LamMacro "ID") (LamVar 4)))
-
---  def FST = (\x1 -> λx2 -> x1) in FST x3 ((\x1 ->x1) x4))   
-ex6'6 = LamDef [ ("FST", LamAbs 1 (LamAbs 2 (LamVar 1)) ) ]  ( LamApp (LamApp (LamMacro "FST") (LamVar 3)) (LamApp (exId) (LamVar 4)))
-
--- def ID = \x1 -> x1 in def SND = (\x1 -> λx2 -> x2) in SND ((\x1 -> x1) (\x2 -> x2)) ID
-ex6'7 = LamDef [ ("ID",exId) , ("SND",LamAbs 1 (LamAbs 2 (LamVar 2))) ]  (LamApp (LamApp (LamMacro "SND") (LamApp wExp wExp) ) (LamMacro "ID") ) 
+substitute value (LamApp x y) expr = LamApp (substitute value x expr) (substitute value y expr)
