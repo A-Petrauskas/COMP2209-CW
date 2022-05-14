@@ -1,4 +1,4 @@
-# COMP2209-CW
+# Haskell Coursework
 2nd year programming coursework
 
 Challenges 1 and 2 work and are tested.
